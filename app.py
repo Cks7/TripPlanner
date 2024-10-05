@@ -15,7 +15,7 @@ st.set_page_config(page_title="Pune Trip Planner", page_icon="🏞️", layout="
 
 # Initialize Firebase (if not already initialized)
 if not firebase_admin._apps:
-    cred = credentials.Certificate("ai-based-trip-planner-firebase-adminsdk-rsoph-ec2cbc9065.json")
+    cred = credentials.Certificate("ai-based-trip-planner-firebase-adminsdk-**************.json")
     firebase_admin.initialize_app(cred)
 
 db = firestore.client()
