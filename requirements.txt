@@ -4,4 +4,3 @@ streamlit
 plotly
 folium
 streamlit-folium
-sklearn
