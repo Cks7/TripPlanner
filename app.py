@@ -6,90 +6,65 @@ import plotly.express as px
 import folium
 from streamlit_folium import folium_static
 import hashlib
-import firebase_admin
-from firebase_admin import credentials
-from firebase_admin import firestore
+import sqlite3
+from datetime import datetime
 
 # Set page config at the very beginning
 st.set_page_config(page_title="Pune Trip Planner", page_icon="🏞️", layout="wide")
 
-# Initialize Firebase (if not already initialized)
-if not firebase_admin._apps:
-    cred = credentials.Certificate("ai-based-trip-planner-firebase-adminsdk-**************.json")
-    firebase_admin.initialize_app(cred)
+# Initialize SQLite databases
+user_conn = sqlite3.connect('user_database.db')
+user_c = user_conn.cursor()
 
-db = firestore.client()
+feedback_conn = sqlite3.connect('feedback_database.db')
+feedback_c = feedback_conn.cursor()
+
+# Create tables if they don't exist
+user_c.execute('''CREATE TABLE IF NOT EXISTS users
+             (username TEXT PRIMARY KEY, password TEXT)''')
+user_conn.commit()
+
+feedback_c.execute('''CREATE TABLE IF NOT EXISTS feedback
+             (id INTEGER PRIMARY KEY AUTOINCREMENT,
+              username TEXT,
+              day INTEGER,
+              restaurant TEXT,
+              restaurant_rating INTEGER,
+              hotel TEXT,
+              hotel_rating INTEGER,
+              place TEXT,
+              place_rating INTEGER,
+              additional_feedback TEXT,
+              timestamp DATETIME)''')
+feedback_conn.commit()
 
 def hash_password(password):
     return hashlib.sha256(password.encode()).hexdigest()
 
 def register_user(username, password):
-    users_ref = db.collection('users')
-    
-    # Check if user already exists
-    if users_ref.document(username).get().exists:
-        return False, "Username already exists"
-    
+    hashed_password = hash_password(password)
     try:
-        # If user doesn't exist, create new user
-        hashed_password = hash_password(password)
-        users_ref.document(username).set({
-            'username': username,
-            'password': hashed_password
-        })
+        user_c.execute("INSERT INTO users (username, password) VALUES (?, ?)", (username, hashed_password))
+        user_conn.commit()
         return True, "Registration successful"
+    except sqlite3.IntegrityError:
+        return False, "Username already exists"
     except Exception as e:
         return False, f"An error occurred: {str(e)}"
 
 def authenticate_user(username, password):
-    users_ref = db.collection('users')
     hashed_password = hash_password(password)
-    
-    user_doc = users_ref.document(username).get()
-    if user_doc.exists:
-        user_data = user_doc.to_dict()
-        return user_data.get('password') == hashed_password
-    return False
+    user_c.execute("SELECT * FROM users WHERE username = ? AND password = ?", (username, hashed_password))
+    return user_c.fetchone() is not None
 
-def auth_page():
-    st.title("Pune Trip Planner - Authentication")
+def store_feedback(username, day, restaurant, restaurant_rating, hotel, hotel_rating, place, place_rating, additional_feedback):
+    feedback_c.execute('''INSERT INTO feedback 
+                 (username, day, restaurant, restaurant_rating, hotel, hotel_rating, place, place_rating, additional_feedback, timestamp)
+                 VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)''',
+              (username, day, restaurant, restaurant_rating, hotel, hotel_rating, place, place_rating, additional_feedback, datetime.now()))
+    feedback_conn.commit()
+    return feedback_c.lastrowid
 
-    if 'authenticated' not in st.session_state:
-        st.session_state.authenticated = False
-
-    if not st.session_state.authenticated:
-        tab1, tab2 = st.tabs(["Login", "Register"])
-        
-        with tab1:
-            st.header("Login")
-            username = st.text_input("Username", key="login_username")
-            password = st.text_input("Password", type="password", key="login_password")
-            if st.button("Login"):
-                if authenticate_user(username, password):
-                    st.session_state.authenticated = True
-                    st.session_state.username = username
-                    st.success("Logged in successfully!")
-                    st.rerun()
-                else:
-                    st.error("Invalid username or password")
-
-        with tab2:
-            st.header("Register")
-            new_username = st.text_input("Username", key="register_username")
-            new_password = st.text_input("Password", type="password", key="register_password")
-            if st.button("Register"):
-                if new_username and new_password:
-                    success, message = register_user(new_username, new_password)
-                    if success:
-                        st.success(message)
-                        st.info("Please go to the Login tab to sign in.")
-                    else:
-                        st.error(message)
-                else:
-                    st.warning("Please enter both username and password.")
-
-    return st.session_state.authenticated
-# Pune Trip Planner functions
 @st.cache_data
 def load_data():
     return pd.read_csv('dataset_without_duplicates.csv')
@@ -165,22 +140,6 @@ def get_budget_level(budget):
     else:
         return 5
 
-def store_feedback(username, day, restaurant, restaurant_rating, hotel, hotel_rating, place, place_rating, additional_feedback):
-    feedback_ref = db.collection('feedback').document()
-    feedback_ref.set({
-        'username': username,
-        'day': day,
-        'restaurant': restaurant,
-        'restaurant_rating': restaurant_rating,
-        'hotel': hotel,
-        'hotel_rating': hotel_rating,
-        'place': place,
-        'place_rating': place_rating,
-        'additional_feedback': additional_feedback,
-        'timestamp': firestore.SERVER_TIMESTAMP
-    })
-    return feedback_ref.id
-
 def show_feedback_form(username, day, restaurant, hotel, place):
     with st.expander(f"Feedback for Day {day}", expanded=False):
         col1, col2, col3 = st.columns(3)
@@ -219,6 +178,45 @@ def create_map(locations):
 def get_input_hash(budget, hotel_rating, hotel_star_rating, restaurant_rating, categories):
     input_string = f"{budget}_{hotel_rating}_{hotel_star_rating}_{restaurant_rating}_{'_'.join(sorted(categories))}"
     return hashlib.md5(input_string.encode()).hexdigest()
+
+def auth_page():
+    st.title("Pune Trip Planner - Authentication")
+
+    if 'authenticated' not in st.session_state:
+        st.session_state.authenticated = False
+
+    if not st.session_state.authenticated:
+        tab1, tab2 = st.tabs(["Login", "Register"])
+        
+        with tab1:
+            st.header("Login")
+            username = st.text_input("Username", key="login_username")
+            password = st.text_input("Password", type="password", key="login_password")
+            if st.button("Login"):
+                if authenticate_user(username, password):
+                    st.session_state.authenticated = True
+                    st.session_state.username = username
+                    st.success("Logged in successfully!")
+                    st.rerun()
+                else:
+                    st.error("Invalid username or password")
+
+        with tab2:
+            st.header("Register")
+            new_username = st.text_input("Username", key="register_username")
+            new_password = st.text_input("Password", type="password", key="register_password")
+            if st.button("Register"):
+                if new_username and new_password:
+                    success, message = register_user(new_username, new_password)
+                    if success:
+                        st.success(message)
+                        st.info("Please go to the Login tab to sign in.")
+                    else:
+                        st.error(message)
+                else:
+                    st.warning("Please enter both username and password.")
+
+    return st.session_state.authenticated
 
 def main():
     # Check authentication
@@ -316,7 +314,6 @@ def main():
                         st.markdown(f"Rating: {'⭐' * int(nearest_place['Rating_Place'])}")
                     else:
                         st.markdown("🏛️ No suitable places found.")
-
                  # Create a map for the day's locations
                 if nearest_hotel is not None and nearest_place is not None:
                     locations = pd.DataFrame({
