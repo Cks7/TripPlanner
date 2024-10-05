@@ -1,5 +1,5 @@
 import pandas as pd
-from scikit_learn.metrics.pairwise import haversine_distances, cosine_similarity
+from sklearn.metrics.pairwise import haversine_distances, cosine_similarity
 from math import radians
 import streamlit as st
 import plotly.express as px
